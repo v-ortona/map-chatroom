@@ -1,0 +1,6 @@
+{
+    "require": {
+        "cboden/ratchet": "^0.4.1",
+        "rybakit/msgpack": "^0.2.2"
+    }
+}

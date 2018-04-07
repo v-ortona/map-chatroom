@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Map chat</title>
+</head>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.3.0/dist/leaflet.css" integrity="sha512-Rksm5RenBEKSKFjgI3a41vrjkw4EVPlJ3+OiI65vTjIdo9brlAacEuKOiQ5OFh7cOI1bkDwLqdLw3Zg0cRJAAQ=="
+    crossorigin="" />
+
+<script src="pixi.min.js"></script>
+
+<!-- TODO: Issue with z-index and clicking -->
+<style>
+    #container {
+        position: relative;
+    }
+    #mapid {
+        height: 600px; width: 1000px; z-index: 1;
+    }
+    .canvas {
+        position: absolute; top: 0; left: 0; z-index: 2;
+    }
+</style>
+
+
+<div id="container">
+    <div id="mapid" class="canvas"></div>
+    <canvas class="canvas" id="pixi"></canvas>
+</div>
+
+<!-- Make sure you put this AFTER Leaflet's CSS -->
+<script src="https://unpkg.com/leaflet@1.3.0/dist/leaflet.js" integrity="sha512-C7BBF9irt5R7hqbUm2uxtODlUVs+IsNu2UULGuZN7gM+k/mmeG4xvIEac01BtQa4YIkUpp23zZC4wIwuXaPMQA=="
+    crossorigin=""></script>
+
+<script>
+    /*
+    *   LIST OF RENDERED PLAYERS
+    */
+    var playerlist = new Map();
+
+    /*
+    *   WEBSOCKET CODE
+    */
+    var conn = new WebSocket('ws://localhost:8080');
+
+    conn.onopen = function (e) {
+        console.log("Connection established!");
+    };
+
+    conn.onmessage = function (e) {
+        let msg = JSON.parse(e.data);
+        console.log(msg);
+
+        // TODO render positions of new players
+        if(msg.t == "p") {  // if type of msg is position
+            for(player in msg.d) {
+                playerlist.set(player, msg.d[player]);
+                console.log("Player: " + player + ", Position: " + playerlist.get(player));
+                //call function to render player
+                render_other_player(player);
+            }
+        }
+        else if(msg.t == "c") { // if type of msg is chat
+            for(player in msg.d) {
+                //call function to render chat bubble
+            }
+        }
+        else {
+            console.log("Not a valid msg type");
+        }
+    };
+
+
+    /*
+    *   MAP CODE
+    */
+    var mymap = L.map('mapid').setView([45.495278, -73.572693], 11);   //coordinates and zoom-level
+
+    L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>, Tiles courtesy of <a href="http://hot.openstreetmap.org/" target="_blank">Humanitarian OpenStreetMap Team</a>'
+    }).addTo(mymap);
+
+    var marker = L.marker([45.495278, -73.572693]).addTo(mymap);
+    marker.bindPopup("<b>Hello world!</b><br>I am a popup.").openPopup();
+
+    // disable zoom and panning
+    mymap.dragging.disable();
+    mymap.doubleClickZoom.disable();
+    mymap.scrollWheelZoom.disable();
+
+    var moveSpeed = 10000; // in meters
+    var currentPos = L.latLng([45.495278, -73.572693]); // center of screen
+
+    function onMapClick(e) {
+        var popup = L.popup();
+        popup
+            .setLatLng(e.latlng)
+            .setContent("You clicked the map at " + e.latlng.toString())
+            .openOn(mymap);
+
+        //make sure panning speed is relative to distance
+        var dur = (mymap.getCenter().distanceTo(e.latlng)) / moveSpeed;    // distance / speed
+        var panoptions = { easeLinearity: 1.0, duration: dur };
+
+        mymap.panTo(e.latlng, panoptions);  // move to where clicked
+        currentPos = e.latlng;  // update position (doesn't correspond to center of screen immediately)       
+
+
+        conn.send(JSON.stringify({ "t": "p", i: [currentPos.lat.toFixed(4), currentPos.lng.toFixed(4)] }));  // send currentPos to server (4-decimal precision)
+    }
+    mymap.on('click', onMapClick);
+
+    // when right clicking
+    function onContextMenu(e) {
+        // do nothing
+    }
+    mymap.on('contextmenu', onContextMenu);
+
+
+
+    /*
+    *   PIXI CODE
+    */
+    let type = "WebGL"
+    if (!PIXI.utils.isWebGLSupported()) {
+        type = "canvas"
+    }
+
+    PIXI.utils.sayHello(type);
+    let pixi_canvas = document.getElementById("pixi");
+
+    //Create a Pixi Application
+    let app = new PIXI.Application({
+        width: 800,
+        height: 600,
+        view: pixi_canvas,  //try to place in pixi element
+        antialias: false,
+        transparent: true, // TODO probably very useful to overlay onto map
+        resolution: 1
+    }
+    );
+
+    //Add the canvas that Pixi automatically created for you to the HTML document
+    document.body.appendChild(app.view);
+
+    //load an image and run the `setup` function when it's done
+    PIXI.loader
+        .add("images/cat.png")
+        .add("images/Males/M_02.png")
+        .on("progress", loadProgressHandler)    // function called whenever something is loading
+        .load(setup);
+
+    function loadProgressHandler(loader, resource) {
+
+        //Display the file `url` currently being loaded
+        console.log("loading: " + resource.url);
+
+        //Display the percentage of files currently loaded
+        console.log("progress: " + loader.progress + "%");
+
+        //If you gave your files names as the first argument 
+        //of the `add` method, you can access them like this
+        //console.log("loading: " + resource.name);
+    }
+
+
+    // List of entities (global)
+    let cat;
+    let player;
+    let other_players = new Object();  //list of other players and their sprites
+
+    //This `setup` function will run when the image has loaded
+    function setup() {
+        //Create the cat sprite
+        cat = new PIXI.Sprite(PIXI.loader.resources["images/cat.png"].texture);
+        cat.x = 66;
+        cat.y = 96;
+        cat.vx = 0;
+        cat.vy = 0;
+
+        let player_texture = PIXI.utils.TextureCache["images/Males/M_02.png"];
+        let rectangle = new PIXI.Rectangle(0, 0, 16, 17);  //x,y,width,height
+        player_texture.frame = rectangle;
+        player = new PIXI.Sprite(player_texture);
+        player.scale.x = 2;
+        player.scale.y = 2;
+
+        //Capture the keyboard arrow keys
+        let left = keyboard(37),
+            up = keyboard(38),
+            right = keyboard(39),
+            down = keyboard(40);
+
+
+        //Controls for the player
+
+        app.renderer.plugins.interaction.on('mousedown', onClickMap);   // when you click on the map/window
+
+        function onClickMap(event) {
+            let point = event.data['global']
+            console.log(point);  //coressponds to global (relative to stage) coords of click
+            player.x = point.x;
+            player.y = point.y;
+        }
+
+
+        //Left arrow key `press` method
+        left.press = () => {
+            //Change the cat's velocity when the key is pressed
+            cat.vx = -5;
+            cat.vy = 0;
+        };
+
+        //Left arrow key `release` method
+        left.release = () => {
+            //If the left arrow has been released, and the right arrow isn't down,
+            //and the cat isn't moving vertically:
+            //Stop the cat
+            if (!right.isDown && cat.vy === 0) {
+                cat.vx = 0;
+            }
+        };
+
+
+        //Add the cat to the stage
+        app.stage.addChild(cat);
+        app.stage.addChild(player);
+
+        //Render the stage   
+        //renderer.render(stage);
+
+        //Start the game loop by adding the `gameLoop` function to
+        //Pixi's `ticker` and providing it with a `delta` argument.
+        app.ticker.add(delta => gameLoop(delta));
+    }
+
+    function render_other_player(id) {
+        if(!other_players.hasOwnProperty(id)) { //render player for first time
+            let player_texture = PIXI.utils.TextureCache["images/Males/M_02.png"];
+            let rectangle = new PIXI.Rectangle(0, 0, 16, 17);  //x,y,width,height
+            player_texture.frame = rectangle;
+            let sprite = new PIXI.Sprite(player_texture);
+            sprite.scale.x = 2;
+            sprite.scale.y = 2;
+            app.stage.addChild(sprite);
+
+            other_players[id] = sprite; //add sprite to list
+            //TODO spawn sprite in right place
+            sprite.x = Math.random()*800
+            sprite.y = Math.random()*600;
+        }
+        else {  //adjust player position
+            //TODO spawn sprite in right place
+            let sprite = other_players[id];
+            sprite.x = Math.random()*800
+            sprite.y = Math.random()*600;
+        }
+    }
+
+    // Keyboard control snippet
+    function keyboard(keyCode) {
+        let key = {};
+        key.code = keyCode;
+        key.isDown = false;
+        key.isUp = true;
+        key.press = undefined;
+        key.release = undefined;
+        //The `downHandler`
+        key.downHandler = event => {
+            if (event.keyCode === key.code) {
+                if (key.isUp && key.press) key.press();
+                key.isDown = true;
+                key.isUp = false;
+            }
+            event.preventDefault();
+        };
+
+        //The `upHandler`
+        key.upHandler = event => {
+            if (event.keyCode === key.code) {
+                if (key.isDown && key.release) key.release();
+                key.isDown = false;
+                key.isUp = true;
+            }
+            event.preventDefault();
+        };
+
+        //Attach event listeners
+        window.addEventListener(
+            "keydown", key.downHandler.bind(key), false
+        );
+        window.addEventListener(
+            "keyup", key.upHandler.bind(key), false
+        );
+        return key;
+    }
+
+    //Set the game state (so you can have different game states ie: menu/play/inventory)
+    state = play;
+
+    function gameLoop(delta) {
+
+        //Update the current game state:
+        state(delta);
+    }
+
+    function play(delta) {
+        //Move the cat 1 pixel to the right each frame
+        cat.x += cat.vx;
+    }
+
+</script>
+
+</html>
